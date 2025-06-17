@@ -1,6 +1,10 @@
 import socket
 from threading import Timer
-from tkinter import Text, END
+try:
+    from tkinter import Text, END
+except ImportError:
+    Text = None
+    END = None
 import datetime
 import numpy as np
 
