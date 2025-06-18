@@ -9,7 +9,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="common_robot_interface",
-    version="0.5.2",
+    version="0.5.3",
     description="Common Robot Interface",
     license="GPLv3",
     long_description=long_description,
