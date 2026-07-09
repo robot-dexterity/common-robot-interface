@@ -489,13 +489,13 @@ class SyncRobot(Robot):
         """
         check_pose(via_pose)
         via_pose_q = euler2quat(via_pose, self._axes)
-        base_via_pose_q = inv_transform(via_pose_q, self._coord_frame_q)
-        base_via_pose_tcp_q = transform(base_via_pose_q, self._tcp_q)
+        tcp_via_pose_q = inv_transform(self._tcp_q, via_pose_q)
+        base_tcp_via_pose_q = inv_transform(tcp_via_pose_q, self._coord_frame_q)
         check_pose(end_pose)
-        end_pose_q = euler2quat(via_pose, self._axes)
-        base_end_pose_q = inv_transform(end_pose_q, self._coord_frame_q)
-        base_end_pose_tcp_q = transform(base_end_pose_q, self._tcp_q)
-        self.controller.move_circular(base_via_pose_tcp_q, base_end_pose_tcp_q, elbow)
+        end_pose_q = euler2quat(end_pose, self._axes)
+        tcp_end_pose_q = inv_transform(self._tcp_q, end_pose_q)
+        base_tcp_end_pose_q = inv_transform(tcp_end_pose_q, self._coord_frame_q)
+        self.controller.move_circular(base_tcp_via_pose_q, base_tcp_end_pose_q, elbow)
 
     def close(self):
         """Releases any resources held by the robot (e.g., sockets).

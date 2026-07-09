@@ -4,7 +4,7 @@ import numpy as np
 
 from cri.robot import SyncRobot, AsyncRobot
 from cri.controller import SimController
-from cri.sim.utils.sim_utils import setup_pybullet_env
+from tactile_sim.pybullet_env import pybullet_env
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -13,7 +13,7 @@ def main():
     base_frame = (0, 0, 0, 0, 0, 0)         # base frame: x->front, y->right, z->up
     work_frame = (350, 0, 100, -180, 0, 0)  # x->back,  y->left,  z->down, rz->clockwise
     
-    embodiment = setup_pybullet_env()
+    embodiment = pybullet_env(embodiment_type="arm", arm_type="ur5", stim_name=None)
 
     with AsyncRobot(SyncRobot(SimController(embodiment.arm))) as robot:
 

@@ -194,23 +194,51 @@ class RobotController(ABC):
         pass
 
 
-from cri.abb.abb_controller import ABBController
-from cri.dummy.dummy_controller import DummyController
-from cri.dobot.magician_controller import MagicianController
-from cri.dobot.mg400_controller import MG400Controller
-from cri.dobot.cr_controller import CRController
-from cri.ur.rtde_controller import RTDEController
-from cri.sim.sim_controller import SimController
-from cri.franka.pyfranka_controller import PyfrankaController
+def get_controller(controller_type: str):
+    """Lazy-load controller implementations to avoid optional import failures."""
+    if controller_type == 'abb':
+        from cri.abb.abb_controller import ABBController
+        return ABBController
+    elif controller_type == 'dummy':
+        from cri.dummy.dummy_controller import DummyController
+        return DummyController
+    elif controller_type == 'magician':
+        from cri.dobot.magician_controller import MagicianController
+        return MagicianController
+    elif controller_type == 'mg400':
+        from cri.dobot.mg400_controller import MG400Controller
+        return MG400Controller
+    elif controller_type == 'cr':
+        from cri.dobot.cr_controller import CRController
+        return CRController
+    elif controller_type == 'ur':
+        from cri.ur.rtde_controller import RTDEController
+        return RTDEController
+    elif controller_type == 'sim':
+        from cri.sim.sim_controller import SimController
+        return SimController
+    elif controller_type == 'franka':
+        from cri.franka.pyfranka_controller import PyfrankaController
+        return PyfrankaController
+    else:
+        raise ValueError(f"Unknown controller type: {controller_type}")
 
 
-Controller = {
-    'abb': ABBController,
-    'dummy': DummyController,
-    'magician': MagicianController,
-    'mg400': MG400Controller,
-    'cr': CRController,
-    'ur': RTDEController,
-    'sim': SimController,
-    'franka': PyfrankaController
-}
+class _ControllerDict(dict):
+    """Dictionary-like controller registry that imports implementations on demand."""
+    _controller_types = {'abb', 'dummy', 'magician', 'mg400', 'cr', 'ur', 'sim', 'franka'}
+
+    def __getitem__(self, key):
+        return get_controller(key)
+
+    def __contains__(self, key):
+        return key in self._controller_types
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except ValueError:
+            return default
+
+
+Controller = _ControllerDict()
