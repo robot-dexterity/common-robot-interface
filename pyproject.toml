@@ -1,0 +1,7 @@
+[project]
+name = "common-robot-interface"
+version = "0.1.0"
+description = "Common Robot Interface"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy", "transforms3d"]
