@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QApplication, QDialog, QStyleFactory, QToolTip, \
 from PyQt5.QtGui import QIcon, QFont
 
 from cri.robot import SyncRobot
-from cri.controller import ABBController, RTDEController, PyfrankaController
+from cri.controller import get_controller # ABBController, RTDEController, PyfrankaController
 
 # Uncomment for testing/debugging
 # from dummy_robot import DummySyncRobot as SyncRobot
@@ -71,7 +71,7 @@ class JoggerDialog(QDialog):
         POSE = 1
         JOINTS = 2
         
-    ROBOTS = ("abb", "ur", "franka")
+    ROBOTS = ("abb", "ur", "franka", "mg400")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -379,13 +379,16 @@ class JoggerDialog(QDialog):
             return
 
         try:
+            controller = get_controller(robot)
             if robot == "abb":
                 port = int(port)
-                self.robot = SyncRobot(ABBController(ip, port))
+                self.robot = SyncRobot(controller(ip, port))
             elif robot == "ur":
-                self.robot = SyncRobot(RTDEController(ip))
+                self.robot = SyncRobot(controller(ip))
             elif robot == "franka":
-                self.robot = SyncRobot(PyfrankaController(ip))
+                self.robot = SyncRobot(controller(ip))
+            elif robot == "mg400":
+                self.robot = SyncRobot(controller())
         except:
             msg = QErrorMessage(self)
             msg.showMessage("Failed to connect to server")
@@ -399,7 +402,7 @@ class JoggerDialog(QDialog):
 
             self.axesComboBox.setCurrentText(self.robot.axes)
 
-            if robot == "franka":
+            if robot in ["franka", "mg400"]:
                 # Disable settings that don't apply to Franka arm
                 self.linearSpeedEditBox.setText("n/a")
                 self.angularSpeedEditBox.setText("n/a")
@@ -637,7 +640,7 @@ class SliderControlWidget(QWidget):
             value = self.sender().text()
             if isValidNumber(value, self.minValue, self.maxValue):
                 value = float(value)
-                self.scrollBar.setValue(value)
+                self.scrollBar.setValue(int(value))
                 self.editBox.setText("{:.1f}".format(value))
                 self.valueChanged.emit()
             else:            
