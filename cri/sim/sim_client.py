@@ -61,18 +61,28 @@ class SimClient:
         joint_angles *= self._scale_angle
         self._sim_robot_arm.move_joints(joint_angles, quick_mode=False)
 
-    def move_linear(self, pose):
+    def move_linear(self, pose, linear_speed=None, angular_speed=None):
         """Executes a linear/cartesian move from the current base frame pose to
         the specified pose.
         pose = (x, y, z, qw, qx, qy, qz)
         x, y, z specify a Cartesian position (default mm)
         qw, qx, qy, qz specify a quaternion rotation
+
+        linear_speed / angular_speed: optional TCP speeds (default linear units/s and angular
+        units/s). Scaled into the arm's native units (like the pose) and forwarded to the arm
+        ONLY when set, so an arm whose move_linear takes just (pose, quick_mode) -- e.g. the
+        pybullet BaseRobotArm -- is called exactly as before when no speed is requested.
         """
         pose = np.array(pose, dtype=np.float32).ravel()
         pose = quat2euler(pose, 'sxyz')
         pose[:3] *= self._scale_linear
         pose[3:] *= self._scale_angle
-        self._sim_robot_arm.move_linear(pose, quick_mode=False)
+        speed_kwargs = {}
+        if linear_speed is not None:
+            speed_kwargs['linear_speed'] = float(linear_speed) * self._scale_linear
+        if angular_speed is not None:
+            speed_kwargs['angular_speed'] = float(angular_speed) * self._scale_angle
+        self._sim_robot_arm.move_linear(pose, quick_mode=False, **speed_kwargs)
 
     def get_joint_angles(self):
         """returns the robot joint angles.

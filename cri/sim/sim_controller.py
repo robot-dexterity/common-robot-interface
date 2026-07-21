@@ -22,6 +22,12 @@ class SimController(RobotController):
         try:
             self._commanded_joint_angles = None
             self._commanded_pose = None
+            # TCP speeds default to None = "unset": move_linear then behaves exactly as before
+            # (the arm is called without any speed argument). A backend whose arm honours a
+            # velocity -- e.g. the IsaacLab CriDriveEnv, which maps it to the blocking-move
+            # interpolation step -- picks these up once set.
+            self._linear_speed = None
+            self._angular_speed = None
         except:
             self._client.close()
             raise
@@ -46,29 +52,31 @@ class SimController(RobotController):
 
     @property
     def linear_speed(self):
-        """Returns the linear speed of the robot TCP.
+        """Returns the linear speed of the robot TCP (None if unset).
         """
-        warnings.warn("speed property not implemented in Simulated Controller")
-        return None
+        return self._linear_speed
 
     @linear_speed.setter
     def linear_speed(self, speed):
         """Sets the linear speed of the robot TCP.
+
+        Passed to the arm's move_linear on subsequent moves. Whether it takes effect depends on
+        the backend arm: the IsaacLab CriDriveEnv converts it to a per-step interpolation
+        displacement (velocity = step / dt); arms that ignore speed are unaffected.
         """
-        warnings.warn("speed property not implemented in Simulated Controller")
+        self._linear_speed = speed
 
     @property
     def angular_speed(self):
-        """Returns the angular speed of the robot TCP.
+        """Returns the angular speed of the robot TCP (None if unset).
         """
-        warnings.warn("speed property not implemented in Simulated Controller")
-        return None
+        return self._angular_speed
 
     @angular_speed.setter
     def angular_speed(self, speed):
-        """Sets the angular speed of the robot TCP.
+        """Sets the angular speed of the robot TCP (see linear_speed for semantics).
         """
-        warnings.warn("speed property not implemented in Simulated Controller")
+        self._angular_speed = speed
 
     @property
     def speed(self):
@@ -149,7 +157,7 @@ class SimController(RobotController):
         if elbow is not None:
             warnings.warn("elbow property not implemented in Simulated controller")
         self._commanded_pose = pose
-        self._client.move_linear(pose)
+        self._client.move_linear(pose, linear_speed=self._linear_speed, angular_speed=self._angular_speed)
 
     def move_circular(self, via_pose, end_pose, elbow=None):
         """Executes a movement in a circular path from the current base frame
