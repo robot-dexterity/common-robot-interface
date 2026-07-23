@@ -5,7 +5,7 @@ Ethernet TCP/IPv4: 192.168.1.10, ip: 192.168.1.6
 import numpy as np
 
 from cri.robot import SyncRobot, AsyncRobot
-from cri.controller import MG400Controller as Controller
+from cri.dobot.mg400_controller import MG400Controller as Controller
 
 np.set_printoptions(precision=2, suppress=True)
 

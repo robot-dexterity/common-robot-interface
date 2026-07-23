@@ -102,3 +102,8 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# uv
+uv.lock
+!pyproject.toml
+.venv/
