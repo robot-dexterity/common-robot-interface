@@ -1,10 +1,14 @@
 [project]
-name = "cri"
-version = "0.1.0"
+name = "common-robot-interface"
+version = "0.5.3"
 description = "Common Robot Interface"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = ["numpy", "transforms3d", "PyQt5"]
+requires-python = ">=3.9"
+dependencies = ["numpy", "transforms3d"]
+
+[project.optional-dependencies]
+sim = ["tactile-sim"]
+gui = ["PyQt5"]
 
 [tool.uv]
 required-environments = [
@@ -12,6 +16,9 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'x86_64'"
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cri"]
 
 [build-system]
 requires = ["hatchling"]
