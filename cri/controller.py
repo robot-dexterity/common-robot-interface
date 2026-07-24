@@ -208,7 +208,9 @@ def get_controller(controller_type: str):
     elif controller_type == 'mg400':
         from cri.dobot.mg400_controller import MG400Controller
         return MG400Controller
-    elif controller_type == 'cr':
+    elif controller_type in ('cr', 'nova2'):
+        # The Dobot Nova2 speaks the same TCP-IP protocol as the CR series, so it is driven by
+        # CRController. 'nova2' is accepted as a readable alias for 'cr'.
         from cri.dobot.cr_controller import CRController
         return CRController
     elif controller_type == 'ur':
@@ -226,7 +228,7 @@ def get_controller(controller_type: str):
 
 class _ControllerDict(dict):
     """Dictionary-like controller registry that imports implementations on demand."""
-    _controller_types = {'abb', 'dummy', 'magician', 'mg400', 'cr', 'ur', 'sim', 'franka'}
+    _controller_types = {'abb', 'dummy', 'magician', 'mg400', 'cr', 'nova2', 'ur', 'sim', 'franka'}
 
     def __getitem__(self, key):
         return get_controller(key)
