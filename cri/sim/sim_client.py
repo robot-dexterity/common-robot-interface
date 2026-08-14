@@ -67,11 +67,7 @@ class SimClient:
         pose = (x, y, z, qw, qx, qy, qz)
         x, y, z specify a Cartesian position (default mm)
         qw, qx, qy, qz specify a quaternion rotation
-
-        linear_speed / angular_speed: optional TCP speeds (default linear units/s and angular
-        units/s). Scaled into the arm's native units (like the pose) and forwarded to the arm
-        ONLY when set, so an arm whose move_linear takes just (pose, quick_mode) -- e.g. the
-        pybullet BaseRobotArm -- is called exactly as before when no speed is requested.
+        optional: linear_speed / angular_speed: TCP speed (pose units/sec)
         """
         pose = np.array(pose, dtype=np.float32).ravel()
         pose = quat2euler(pose, 'sxyz')
