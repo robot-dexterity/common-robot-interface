@@ -20,6 +20,7 @@ class MG400Controller(RobotController):
         try:
             # self.tcp = (0, 0, 0, 1, 0, 0, 0)     # base frame (quaternion)
             self.linear_speed = 20  # %
+            self.servo_mode = False
             self.servo_delay = None
             self.tolerance = None
 
@@ -36,6 +37,27 @@ class MG400Controller(RobotController):
                 self._ip,
                 self._client.get_info(),
                 )
+
+    @property
+    def servo_mode(self):
+        """Returns whether moves are streamed (ServoP, ServoJ) """
+        return self._client.get_servo_mode()
+
+    @servo_mode.setter
+    def servo_mode(self, mode):
+        """Streams moves when true; when false, after the robot reaches its last streamed target, moves in
+        turn, each waited for """
+        self._client.set_servo_mode(mode)
+
+    @property
+    def servo_step_limit(self):
+        """Returns the most a streamed target may move from the one before (mm, degrees) """
+        return self._client.get_servo_step_limit()
+
+    @servo_step_limit.setter
+    def servo_step_limit(self, limit):
+        """Sets the most a streamed target may move from the one before (mm, degrees) """
+        self._client.set_servo_step_limit(limit)
 
     @property
     def servo_delay(self):

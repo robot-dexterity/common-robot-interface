@@ -6,7 +6,7 @@ API modified to have ServoP command
 
 import threading
 import numpy as np
-from time import sleep
+from time import monotonic, sleep
 
 from cri.dobot.mg400.dobot_api import DobotApiDashboard, DobotApi, DobotApiMove, MyType
 from cri.transforms import euler2quat, quat2euler
@@ -21,9 +21,17 @@ class MG400Client:
     class InvalidZone(ValueError):
         pass
 
+    class ServoJump(ValueError):
+        """A streamed (servo mode) target too far from the one before: ServoP heads straight for it."""
+
+    DEFAULT_SERVO_DELAY = (0.1, 0.02)  # s: the wait after each streamed move, and the overlap ServoP is given more
+    SERVO_STEP_LIMIT = (5.0, 15.0)  # mm, degrees: the most a streamed target may move from the one before
+
     def __init__(self, ip="192.168.1.6"):
         self.set_units('millimeters', 'degrees')     
         self.joint_angles_actual, self.pose_actual, self.speed_actual = None, None, None
+        self._servo_mode, self._servo_delay, self._tolerance = False, None, None
+        self._servo_target, self._servo_step_limit = None, self.SERVO_STEP_LIMIT
         self.connect(ip)
 
     def __repr__(self):
@@ -38,14 +46,18 @@ class MG400Client:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()        
 
-    def _wait_pose(self, pose, tol=0.1):
-        """Waits for the robot to reach the specified pose within a tolerance."""
+    def _wait_pose(self, pose, tol=0.1, timeout=None):
+        """Waits for the robot to reach the specified pose within a tolerance (and at most timeout s, if given:
+        returns whether it did)."""
+        start = monotonic()
         while True:
+            if timeout is not None and monotonic() - start > timeout:
+                return False
             self._globalLock.acquire()
             if self.pose_actual is not None:
                 if np.all(np.abs(self.pose_actual[:4] - pose[:4]) <= tol):
                     self._globalLock.release()
-                    return
+                    return True
             self._globalLock.release()
             sleep(0.001)
 
@@ -106,8 +118,32 @@ class MG400Client:
         """Returns a unique robot identifier string """
         pass
     
+    def set_servo_mode(self, servo_mode):
+        """Streams moves (ServoP, ServoJ) when true, else moves in turn (MovL, JointMovJ), each waited for.
+        Leaving servo mode waits for the robot to reach its last streamed target, so the moves after it start
+        from there."""
+        if type(servo_mode) is not bool:
+            raise ValueError("servo_mode is true or false")
+        if self._servo_mode and not servo_mode and self._servo_target is not None:
+            if not self._wait_pose(self._servo_target, tol=0.1, timeout=5):
+                raise self.CommandFailed(f"The robot did not reach its last servo target {self._servo_target}")
+        self._servo_mode, self._servo_target = servo_mode, None
+
+    def get_servo_mode(self):
+        """Gets whether moves are streamed (servo mode) """
+        return self._servo_mode
+
+    def set_servo_step_limit(self, limit):
+        """Sets the most a streamed target may move from the one before (mm, degrees) """
+        self._servo_step_limit = tuple(float(value) for value in limit)
+
+    def get_servo_step_limit(self):
+        """Gets the most a streamed target may move from the one before (mm, degrees) """
+        return self._servo_step_limit
+
     def set_servo_delay(self, servo_delay):
-        """Sets time delay for servo move commands """
+        """Sets time delay for servo move commands: the wait after each, and the overlap ServoP is given more
+        to reach it in (s; a number, its overlap 0.02) """
         if servo_delay is not None:
             if isinstance(servo_delay, (float, int)):
                 servo_delay = (servo_delay, 0.02)
@@ -175,9 +211,11 @@ class MG400Client:
         j0, j1, j2, rz numbered from base to end effector (default degres) """       
         joint_angles = np.array(joint_angles, dtype=np.float32).ravel()
         joint_angles *= self._scale_angle 
-        if self._servo_delay is not None:
-            self._move.ServoJ(*joint_angles, self._servo_delay[0] + self._servo_delay[1])
-            sleep(self._servo_delay[0])
+        if self._servo_mode:
+            delay = self._servo_delay or self.DEFAULT_SERVO_DELAY
+            self._servo_target = None  # A joint target: no Cartesian one to wait for on leaving servo mode.
+            self._move.ServoJ(*joint_angles, delay[0] + delay[1])
+            sleep(delay[0])
         else:
             self._move.JointMovJ(*joint_angles)
             self._wait_joint_angles(joint_angles, self._tolerance) if self._tolerance else self._move.Sync()
@@ -194,12 +232,31 @@ class MG400Client:
         pose[:3] *= self._scale_linear
         pose[3] *= self._scale_angle
         pose = self.unwrap_pose_angle(pose)
-        if self._servo_delay is not None:
-            self._move.ServoP(*pose, self._servo_delay[0] + self._servo_delay[1])
-            sleep(self._servo_delay[0])
+        if self._servo_mode:
+            delay = self._servo_delay or self.DEFAULT_SERVO_DELAY
+            self._check_servo_step(pose)
+            self._servo_target = pose.copy()
+            self._move.ServoP(*pose, delay[0] + delay[1])
+            sleep(delay[0])
         else: 
             self._move.MovL(*pose)
             self._wait_pose(pose, self._tolerance) if self._tolerance else self._move.Sync()
+
+    def _check_servo_step(self, pose):
+        """Refuse a streamed target further than the step limit from the last (its own, or the robot's, the
+        first): ServoP heads straight for it, so a far one is a jump."""
+        last = self._servo_target
+        if last is None:
+            self._globalLock.acquire()
+            last = None if self.pose_actual is None else np.array(self.pose_actual[:4], dtype=np.float32)
+            self._globalLock.release()
+        if last is None:
+            return
+        distance, turn = float(np.linalg.norm(pose[:3] - last[:3])), float(abs(pose[3] - last[3]))
+        limit_mm, limit_deg = self._servo_step_limit
+        if distance > limit_mm or turn > limit_deg:
+            raise self.ServoJump(f"A servo target {distance:.1f} mm and {turn:.1f} degrees from the last: more "
+                                 f"than {limit_mm:g} mm or {limit_deg:g} degrees")
 
     def move_circular(self, via_pose, end_pose):
         """Executes a movement in a circular path from current base frame pose, through via_pose, to end_pose.

@@ -41,6 +41,12 @@ class FakeMG400Client:
     def get_servo_delay(self):
         return self.servo_delay
 
+    def set_servo_mode(self, servo_mode):
+        self.servo_mode = servo_mode
+
+    def get_servo_mode(self):
+        return self.servo_mode
+
     def set_tolerance(self, tolerance):
         self.tolerance = tolerance
 
@@ -66,6 +72,7 @@ class MG400ControllerTests(unittest.TestCase):
         self.assertEqual(controller._client.linear_speed, 20)
         self.assertIsNone(controller.servo_delay)
         self.assertIsNone(controller.tolerance)
+        self.assertFalse(controller.servo_mode)
 
         controller.servo_delay = 0.25
         controller.tolerance = 0.1
