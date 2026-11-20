@@ -78,10 +78,10 @@ class MG400Client:
         self._dashboard.User(0)
         self._dashboard.Tool(0)
 
+        self._globalLock = threading.Lock()  # Before the feed thread, which takes it on its first message.
         feed_thread = threading.Thread(target=self.get_feed, args=(self._feed,))
         feed_thread.setDaemon(True)
         feed_thread.start()
-        self._globalLock = threading.Lock()
 
     def get_feed(self, feed: DobotApi):
         hasRead = 0
@@ -162,7 +162,8 @@ class MG400Client:
         x, y, z specify a Euclidean position (default mm)
         rz rotation of end effector (default degrees) """
         pose = self.pose_actual
-        pose = np.array([*pose[:3], 0, 0, pose[3]], dtype=np.float32)
+        tilt = getattr(self, "_tilt", (0, 0))  # As last commanded: the MG400 cannot tilt, so reports none;
+        pose = np.array([*pose[:3], *tilt, pose[3]], dtype=np.float32)  # else a read pose's tool flips over.
         pose = euler2quat(pose, 'sxyz')
         pose[:3] /= self._scale_linear        
         pose[3:] /= self._scale_angle        
@@ -187,7 +188,9 @@ class MG400Client:
         x, y, z specify a Euclidean position (default mm)
         rz rotation of end effector (default degrees) """
         pose = np.array(pose, dtype=np.float32).ravel()
-        pose = quat2euler(pose, 'sxyz')[[0, 1, 2, 5]]
+        pose = quat2euler(pose, 'sxyz')
+        self._tilt = tuple(float(angle) for angle in pose[3:5])  # Its rx, ry, which the MG400 drops: get_pose's.
+        pose = pose[[0, 1, 2, 5]]
         pose[:3] *= self._scale_linear
         pose[3] *= self._scale_angle
         pose = self.unwrap_pose_angle(pose)
@@ -209,7 +212,9 @@ class MG400Client:
         via_pose[:3] *= self._scale_linear
         via_pose[3] *= self._scale_angle
         end_pose = np.array(end_pose, dtype=np.float32).ravel()
-        end_pose = quat2euler(end_pose, 'sxyz')[[0, 1, 2, 5]]
+        end_pose = quat2euler(end_pose, 'sxyz')
+        self._tilt = tuple(float(angle) for angle in end_pose[3:5])
+        end_pose = end_pose[[0, 1, 2, 5]]
         end_pose[:3] *= self._scale_linear   
         end_pose[3] *= self._scale_angle    
         self._move.Circle(*via_pose, *end_pose, 1) # doesn't work
