@@ -5,8 +5,10 @@ API modified to have ServoP command
 """
 
 import threading
+from collections import deque
+
 import numpy as np
-from time import monotonic, sleep
+from time import monotonic, perf_counter, sleep
 
 from cri.dobot.mg400.dobot_api import DobotApiDashboard, DobotApi, DobotApiMove, MyType
 from cri.transforms import euler2quat, quat2euler
@@ -24,14 +26,25 @@ class MG400Client:
     class ServoJump(ValueError):
         """A streamed (servo mode) target too far from the one before: ServoP heads straight for it."""
 
-    DEFAULT_SERVO_DELAY = (0.1, 0.02)  # s: the wait after each streamed move, and the overlap ServoP is given more
+    class ServoStopped(ValueError):
+        """The robot reading too far from its last streamed target: it has stopped (an alarm, such as its
+        collision detection), while the targets would carry on without it."""
+
+    DEFAULT_SERVO_DELAY = (0.1, 0.02)  # s: each streamed move's step (from one's return to the next's), and the
+    # overlap ServoP is given more
     SERVO_STEP_LIMIT = (5.0, 15.0)  # mm, degrees: the most a streamed target may move from the one before
+    SERVO_RECENT = 5  # targets: each is given the longest of the last this many gaps between them
+    SERVO_FOLLOW_LIMIT = 5.0  # mm: the most the robot may read from its last streamed target (on its way, ~2)
 
     def __init__(self, ip="192.168.1.6"):
         self.set_units('millimeters', 'degrees')     
         self.joint_angles_actual, self.pose_actual, self.speed_actual = None, None, None
         self._servo_mode, self._servo_delay, self._tolerance = False, None, None
         self._servo_target, self._servo_step_limit = None, self.SERVO_STEP_LIMIT
+        self._last_commanded = None
+        self._servo_last_call, self._servo_intervals = None, deque(maxlen=self.SERVO_RECENT)  # The last target's
+        # time, and the recent times between targets
+        self._servo_last_return = None  # When the last streamed move returned: its step's start
         self.connect(ip)
 
     def __repr__(self):
@@ -87,6 +100,7 @@ class MG400Client:
 
         self._dashboard.ClearError()
         self._dashboard.EnableRobot()
+        self._wait_enabled()  # A move sent while it is still enabling is dropped, and its Sync never returns.
         self._dashboard.User(0)
         self._dashboard.Tool(0)
 
@@ -94,6 +108,27 @@ class MG400Client:
         feed_thread = threading.Thread(target=self.get_feed, args=(self._feed,))
         feed_thread.setDaemon(True)
         feed_thread.start()
+
+    ENABLED = 5  # RobotMode(): enabled and idle (9: an alarm, 4: disabled)
+
+    def _wait_enabled(self, timeout=10.0, poll=0.1):
+        """Waits until the robot reports itself enabled (RobotMode 5), after an alarm cleared or being disabled:
+        enabling takes a few seconds. Raises CommandFailed if it is not by timeout, with the mode it is in."""
+        end, mode = monotonic() + timeout, None
+        while True:
+            reply = self._dashboard.RobotMode()
+            if not isinstance(reply, str):  # No reply to read (a stand-in dashboard): nothing to wait for.
+                return
+            try:
+                mode = int(reply.split("{", 1)[1].split("}", 1)[0])
+            except (IndexError, ValueError):
+                mode = None
+            if mode == self.ENABLED:
+                return
+            if monotonic() > end:
+                raise self.CommandFailed(f"The robot did not enable within {timeout} s (RobotMode {mode}: 9 an "
+                                         "alarm, 4 disabled): clear it on the robot, then try again")
+            sleep(poll)
 
     def get_feed(self, feed: DobotApi):
         hasRead = 0
@@ -124,10 +159,32 @@ class MG400Client:
         from there."""
         if type(servo_mode) is not bool:
             raise ValueError("servo_mode is true or false")
-        if self._servo_mode and not servo_mode and self._servo_target is not None:
-            if not self._wait_pose(self._servo_target, tol=0.1, timeout=5):
-                raise self.CommandFailed(f"The robot did not reach its last servo target {self._servo_target}")
-        self._servo_mode, self._servo_target = servo_mode, None
+        target = self._servo_target if self._servo_mode and not servo_mode else None
+        self._servo_last_call = self._servo_last_return = None  # Measured afresh each time in servo mode.
+        self._servo_intervals.clear()
+        self._servo_mode, self._servo_target = servo_mode, None  # Left even if the robot never gets there.
+        if target is not None and not self._wait_pose(target, tol=0.1, timeout=5):
+            raise self.CommandFailed(f"The robot did not reach its last servo target {target}: stopped, or "
+                                     "in alarm?")
+
+    def _servo_wait(self, delay):
+        """The wait after a streamed move: what is left of its step (the delay) after the caller's own time since
+        the last one returned (such as reading and processing an image), so the steps, and the caller's images,
+        come at a steady pace however long the caller takes, up to the delay."""
+        if self._servo_last_return is None:
+            return delay[0]
+        return max(0.0, delay[0] - (perf_counter() - self._servo_last_return))
+
+    def _servo_time(self, delay):
+        """The time a servo target is given: the longest of the recent times between targets (measured as they
+        come, so the robot is still on its way when the next comes, even after a slow one) and the overlap; never
+        less than the delay and the overlap."""
+        now = perf_counter()
+        if self._servo_last_call is not None and now - self._servo_last_call < 1.0:
+            self._servo_intervals.append(now - self._servo_last_call)
+        self._servo_last_call = now
+        least = delay[0] + delay[1]
+        return max([least] + [interval + delay[1] for interval in self._servo_intervals])
 
     def get_servo_mode(self):
         """Gets whether moves are streamed (servo mode) """
@@ -142,8 +199,9 @@ class MG400Client:
         return self._servo_step_limit
 
     def set_servo_delay(self, servo_delay):
-        """Sets time delay for servo move commands: the wait after each, and the overlap ServoP is given more
-        to reach it in (s; a number, its overlap 0.02) """
+        """Sets time delay for servo move commands: each one's step, from one's return to the next's (the wait
+        after each, less the caller's own time between them), and the overlap ServoP is given more to reach it in
+        (s; a number, its overlap 0.02) """
         if servo_delay is not None:
             if isinstance(servo_delay, (float, int)):
                 servo_delay = (servo_delay, 0.02)
@@ -211,6 +269,7 @@ class MG400Client:
         j0, j1, j2, rz numbered from base to end effector (default degres) """       
         joint_angles = np.array(joint_angles, dtype=np.float32).ravel()
         joint_angles *= self._scale_angle 
+        self._pose_prev = None  # Its last streamed target gone: the next unwrapped against the joints, as they read.
         if self._servo_mode:
             delay = self._servo_delay or self.DEFAULT_SERVO_DELAY
             self._servo_target = None  # A joint target: no Cartesian one to wait for on leaving servo mode.
@@ -236,16 +295,27 @@ class MG400Client:
             delay = self._servo_delay or self.DEFAULT_SERVO_DELAY
             self._check_servo_step(pose)
             self._servo_target = pose.copy()
-            self._move.ServoP(*pose, delay[0] + delay[1])
-            sleep(delay[0])
+            self._move.ServoP(*pose, self._servo_time(delay))  # Still on its way when the next comes.
+            self._last_commanded = pose.copy()
+            sleep(self._servo_wait(delay))
+            self._servo_last_return = perf_counter()
         else: 
             self._move.MovL(*pose)
+            self._last_commanded = pose.copy()
             self._wait_pose(pose, self._tolerance) if self._tolerance else self._move.Sync()
 
     def _check_servo_step(self, pose):
         """Refuse a streamed target further than the step limit from the last (its own, or the robot's, the
-        first): ServoP heads straight for it, so a far one is a jump."""
-        last = self._servo_target
+        first): ServoP heads straight for it, so a far one is a jump; or any, once the robot reads too far from
+        the last: it has stopped."""
+        if self._servo_target is not None and self.pose_actual is not None:
+            self._globalLock.acquire()
+            behind = float(np.linalg.norm(np.array(self.pose_actual[:3]) - self._servo_target[:3]))
+            self._globalLock.release()
+            if behind > self.SERVO_FOLLOW_LIMIT:
+                raise self.ServoStopped(f"The robot reads {behind:.1f} mm from its last servo target: stopped "
+                                        "(an alarm?)")
+        last = self._servo_target if self._servo_target is not None else self._last_commanded
         if last is None:
             self._globalLock.acquire()
             last = None if self.pose_actual is None else np.array(self.pose_actual[:4], dtype=np.float32)
@@ -278,10 +348,17 @@ class MG400Client:
         self.wait_pose(end_pose)   
 
     def unwrap_pose_angle(self, pose):
-        # Ensure angle is continuous with previous value to avoid jumps (e.g. wrapping)
-        if not hasattr(self, '_pose_prev'):
-            self._pose_prev = pose[-1]
-        pose[-1] = min((pose[-1] + d for d in (-360, 0, 360)), key=lambda x: abs(x - self._pose_prev))
+        """The pose's angle, by whole turns, nearest the wrist's: out of servo mode, the flange's turn as the joints
+        read it (J1 + J4, never wrapped, whatever moved it last: a joint move, a hand, another step's lap); in servo
+        mode, the last target streamed, which the robot is still on its way to."""
+        joints = getattr(self, 'joint_angles_actual', None)
+        if self._servo_mode and getattr(self, '_pose_prev', None) is not None:
+            reference = self._pose_prev
+        elif joints is not None:
+            reference = float(joints[0] + joints[3])
+        else:
+            reference = pose[-1]
+        pose[-1] = min((pose[-1] + d for d in (-360, 0, 360)), key=lambda x: abs(x - reference))
         self._pose_prev = pose[-1]
         return pose
 
